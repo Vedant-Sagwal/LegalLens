@@ -15,7 +15,6 @@ from typing import Dict, List
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 
 
