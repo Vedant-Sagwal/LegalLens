@@ -4,8 +4,6 @@ import { ResultsDisplay } from '../components/ResultsDisplay';
 import { Loader } from '../components/Loader';
 import { ErrorMessage } from '../components/ErrorMessage';
 
-// Define the URL where your backend is running.
-const BACKEND_URL = 'http://localhost:8000';
 
 export const AnalyzePage = () => {
   const [file, setFile] = useState(null);
@@ -31,7 +29,7 @@ export const AnalyzePage = () => {
 
     try {
       // Make the API call to your backend's /simplify_document endpoint
-      const response = await fetch(`${BACKEND_URL}/simplify_document`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/simplify_document`, {
         method: 'POST',
         body: formData,
       });
@@ -52,12 +50,12 @@ export const AnalyzePage = () => {
       setIsLoading(false);
     }
   };
-  
+
   const handleReset = () => {
-      setFile(null);
-      setResults(null);
-      setError('');
-      setIsLoading(false);
+    setFile(null);
+    setResults(null);
+    setError('');
+    setIsLoading(false);
   }
 
   return (
