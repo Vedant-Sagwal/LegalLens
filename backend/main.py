@@ -5,6 +5,7 @@ import json
 from dotenv import load_dotenv
 import google.generativeai as genai
 import fitz
+import re
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -82,9 +83,13 @@ def extract_clauses(text: str) -> str:
         response = llm.generate_content(prompt)
 
         # Clean up potential markdown formatting from the response text
-        clean_text = response.text.strip().replace("```json", "").replace("```", "")
+        json_match = re.search(r"\{.*\}", response.text, re.DOTALL)
+        if not json_match:
+            raise ValueError("No valid JSON object found in Gemini response.")
 
-        return clean_text
+        clean_json = json_match.group(0)
+        return clean_json
+
 
     except Exception as e:
         logging.error(f"Error with Gemini API during clause extraction: {e}")
