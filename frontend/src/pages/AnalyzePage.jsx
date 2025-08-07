@@ -29,6 +29,8 @@ export const AnalyzePage = () => {
 
     try {
       // Make the API call to your backend's /simplify_document endpoint
+      console.log(import.meta.env.VITE_API_URL);
+
       const response = await fetch(`${import.meta.env.VITE_API_URL}/simplify_document`, {
         method: 'POST',
         body: formData,
