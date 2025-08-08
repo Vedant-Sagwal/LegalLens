@@ -2,36 +2,41 @@ import os
 import shutil
 import logging
 import json
-from dotenv import load_dotenv
-import google.generativeai as genai
-import fitz
 import re
+import fitz  # PyMuPDF
+import asyncio
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import Dict, List
 
+import google.generativeai as genai
 
+# Load environment variables
+load_dotenv()
+
+# Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-
+# Configure Gemini API
 api_key = os.getenv("GEMINI_API_KEY")
-
-
 if not api_key:
     logging.error("FATAL: GEMINI_API_KEY not found in environment variables.")
 else:
     genai.configure(api_key=api_key)
 
-
 llm = genai.GenerativeModel("gemini-1.5-flash")
 
+# --- Utility Functions ---
 
-#Parsing text from my document
 def read_pdf_file(file_path: str) -> str:
     try:
         doc = fitz.open(file_path)
+        if doc.is_encrypted:
+            raise ValueError("Encrypted PDF files are not supported.")
         text = ""
         for page in doc:
             text += page.get_text()
@@ -40,7 +45,6 @@ def read_pdf_file(file_path: str) -> str:
         logging.error(f"Error reading PDF file at {file_path}: {e}")
         return ""
 
-#to generate a simple and readable summary of the document
 def get_summary(text: str) -> str:
     try:
         prompt = f"""
@@ -59,10 +63,7 @@ def get_summary(text: str) -> str:
         logging.error(f"Error with Gemini API during summary generation: {e}")
         return "Could not generate summary due to an API error."
 
-
-#function for extracting legal clauses from the document
 def extract_clauses(text: str) -> str:
-
     try:
         prompt = f"""
         Analyze the following legal document. Your task is to extract key clauses and categorize them.
@@ -82,14 +83,12 @@ def extract_clauses(text: str) -> str:
         """
         response = llm.generate_content(prompt)
 
-        # Clean up potential markdown formatting from the response text
         json_match = re.search(r"\{.*\}", response.text, re.DOTALL)
         if not json_match:
             raise ValueError("No valid JSON object found in Gemini response.")
 
         clean_json = json_match.group(0)
         return clean_json
-
 
     except Exception as e:
         logging.error(f"Error with Gemini API during clause extraction: {e}")
@@ -99,23 +98,17 @@ def extract_clauses(text: str) -> str:
             "confidentiality": []
         })
 
-
-
+# --- FastAPI Setup ---
 
 app = FastAPI(title="Legal-Lens API")
 
-
-origins = [
-    "https://legallensfrontend.onrender.com"
-]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["https://legallensfrontend.onrender.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 class ResultStructure(BaseModel):
     summary: str
@@ -123,41 +116,50 @@ class ResultStructure(BaseModel):
 
 @app.post("/simplify_document", response_model=ResultStructure)
 async def simplify_document(uploaded_file: UploadFile = File(...)):
-
     file_path = f"temp_{uploaded_file.filename}"
 
     try:
-
+        # Save file locally
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(uploaded_file.file, buffer)
 
+        logging.info("PDF saved locally.")
 
+        # Check file size (optional, for large PDFs)
+        if os.path.getsize(file_path) > 10 * 1024 * 1024:  # 10 MB
+            raise HTTPException(status_code=400, detail="Uploaded PDF is too large.")
+
+        # Extract text from PDF
+        logging.info("Extracting text from PDF...")
         doc_text = read_pdf_file(file_path)
+        logging.info("PDF text extracted.")
 
-
-        if not doc_text:
-            logging.error("Document text is empty. The file might be unreadable or empty.")
+        if not doc_text.strip():
             raise HTTPException(status_code=400, detail="Could not read text from the uploaded document.")
 
-        # Calling my functions
-        summary = get_summary(doc_text)
-        clauses_json_string = extract_clauses(doc_text)
+        # Generate summary and clauses using threadpool
+        logging.info("Generating summary via Gemini...")
+        summary = await run_in_threadpool(get_summary, doc_text)
 
-        # Checking whether the clauses is in json format
+        logging.info("Extracting clauses via Gemini...")
+        clauses_json_string = await run_in_threadpool(extract_clauses, doc_text)
+
+        # Parse JSON
         try:
             clauses_dict = json.loads(clauses_json_string)
         except json.JSONDecodeError:
-            logging.error("Failed to parse clauses JSON from AI response. The response was not valid JSON.")
-            raise HTTPException(status_code=500, detail="The AI failed to structure the clauses correctly. Please try again.")
+            logging.error("Failed to parse Gemini's response into JSON.")
+            raise HTTPException(status_code=500, detail="Gemini returned an invalid clause JSON format.")
 
         return {"summary": summary, "clauses": clauses_dict}
 
     except HTTPException as http_exc:
         raise http_exc
     except Exception as e:
-        logging.error(f"An unexpected server error occurred: {e}")
-        raise HTTPException(status_code=500, detail="An internal server error occurred during analysis.")
+        logging.error(f"Unexpected server error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error during document processing.")
     finally:
-        # Cleaning temporary file from my local disk
+        # Clean up file
         if os.path.exists(file_path):
             os.remove(file_path)
+            logging.info(f"Temporary file {file_path} removed.")
