@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 import fitz
 import re
-import asyncio
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -100,11 +99,6 @@ def extract_clauses(text: str) -> str:
             "confidentiality": []
         })
 
-async def async_summary(text):
-    return get_summary(text)
-
-async def async_clauses(text):
-    return extract_clauses(text)
 
 
 
@@ -146,11 +140,8 @@ async def simplify_document(uploaded_file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="Could not read text from the uploaded document.")
 
         # Calling my functions
-
-        summary, clauses_json_string = await asyncio.gather(
-            async_summary(doc_text),
-            async_clauses(doc_text)
-        )
+        summary = get_summary(doc_text)
+        clauses_json_string = extract_clauses(doc_text)
 
         # Checking whether the clauses is in json format
         try:
