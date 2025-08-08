@@ -46,12 +46,11 @@ def get_summary(text: str) -> str:
         You are an excellent paralegal in a big law firm.
         Summarize the following legal document in a simple, easily readable format.
         The summary should be clear enough for a person with little legal knowledge to understand.
-        Instructions:
+        **Instructions:**
         1. Organize the summary under clear headings (like "Parties Involved", "Duration", etc.).
         2. Under each heading, use "-" or "*" for bullet points.
         3. Be concise and avoid legal jargon.
         4. The summary should help a non-legal person understand the document.
-        5. For heading do not use anything as bullet point i will add them myself
         The legal document is:
         ---
         {text}
