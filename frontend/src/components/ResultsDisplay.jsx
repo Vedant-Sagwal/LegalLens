@@ -4,20 +4,67 @@ import { BookText, AlertTriangle } from 'lucide-react';
 export const ResultsDisplay = ({ results, onReset }) => {
   const { summary, clauses } = results;
 
+  // Parse summary into sections with heading + bullets
+  const parseSummary = (text) => {
+    const lines = text.split('\n');
+    const sections = [];
+    let currentSection = { heading: '', bullets: [] };
+
+    lines.forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+
+      if (/^[-*]\s/.test(trimmed)) {
+        // Line is a bullet point
+        currentSection.bullets.push(trimmed);
+      } else {
+        // New heading
+        if (currentSection.heading || currentSection.bullets.length) {
+          sections.push(currentSection);
+          currentSection = { heading: '', bullets: [] };
+        }
+        currentSection.heading = trimmed;
+      }
+    });
+
+    // Push the last section if not empty
+    if (currentSection.heading || currentSection.bullets.length) {
+      sections.push(currentSection);
+    }
+
+    return sections;
+  };
+
+  const parsedSummary = parseSummary(summary);
+
   return (
     <div className="bg-white p-6 md:p-8 rounded-xl shadow-md border border-slate-200 space-y-8">
+
+      {/* Summary Section */}
       <div className="space-y-3">
         <div className="flex items-center space-x-3">
           <BookText className="h-6 w-6 text-slate-600" />
           <h2 className="text-2xl font-bold text-slate-800">Analysis Summary</h2>
         </div>
-        <p className="text-slate-600 leading-relaxed">{summary}</p>
+        <div className="text-slate-600 space-y-4">
+          {parsedSummary.map((section, idx) => (
+            <div key={idx}>
+              <h3 className="text-lg font-semibold text-slate-700">{section.heading}</h3>
+              <ul className="list-disc list-inside space-y-1 pl-2">
+                {section.bullets.map((point, i) => (
+                  <li key={i}>{point.replace(/^[-*]\s/, '')}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
       </div>
 
+      {/* Clauses Section */}
       <div className="space-y-4">
         <div className="flex items-center space-x-3">
           <AlertTriangle className="h-6 w-6 text-slate-600" />
-          <h2 className="text-2xl font-bold text-slate-800">Key Clauses Extracted </h2>
+          <h2 className="text-2xl font-bold text-slate-800">Key Clauses Extracted</h2>
         </div>
         <div className="space-y-6">
           {Object.entries(clauses).map(([category, clauseList]) => (
@@ -38,9 +85,10 @@ export const ResultsDisplay = ({ results, onReset }) => {
           ))}
         </div>
       </div>
-      
+
+      {/* Reset Button */}
       <div className="pt-6 border-t border-slate-200">
-         <button
+        <button
           onClick={onReset}
           className="w-full flex items-center justify-center px-6 py-3 text-base font-medium text-white bg-slate-800 border border-transparent rounded-lg shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500 transition-all"
         >
