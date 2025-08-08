@@ -2,33 +2,34 @@ import os
 import shutil
 import logging
 import json
+import re
+
 from dotenv import load_dotenv
 import google.generativeai as genai
-import fitz
-import re
+import fitz  # PyMuPDF
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, List
 
+# Load environment variables
+load_dotenv()
 
+# Logging configuration
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-
+# Load Gemini API key
 api_key = os.getenv("GEMINI_API_KEY")
-
-
 if not api_key:
     logging.error("FATAL: GEMINI_API_KEY not found in environment variables.")
 else:
     genai.configure(api_key=api_key)
 
-
+# Load Gemini model
 llm = genai.GenerativeModel("gemini-1.5-flash")
 
-
-#Parsing text from my document
+# Read text from PDF using PyMuPDF
 def read_pdf_file(file_path: str) -> str:
     try:
         doc = fitz.open(file_path)
@@ -40,34 +41,44 @@ def read_pdf_file(file_path: str) -> str:
         logging.error(f"Error reading PDF file at {file_path}: {e}")
         return ""
 
-#to generate a simple and readable summary of the document
-def get_summary(text: str) -> str:
+# Generate structured JSON summary
+def get_summary(text: str) -> Dict[str, List[str]]:
     try:
         prompt = f"""
         You are an excellent paralegal in a big law firm.
-        Summarize the following legal document in a simple, easily readable format.
-        The summary should be clear enough for a person with little legal knowledge to understand.
-        Instructions:
-        1. Use clear headings to seperate key topics.
-        2. Use bullet points under each heading to list important details
-        3. The summary should be consice and easy to follow
+        Summarize the following legal document in a structured and simplified JSON format.
 
-        The legal document is:
+        **Instructions:**
+        1. Analyze the document and break it down into clear key headings.
+        2. Under each heading, list important points as bullet points (in plain text).
+        3. Output the result as a valid JSON object where:
+           - Each key is a heading
+           - The value is a list of bullet points under that heading
+        4. If no useful content is found for a heading, omit it.
+        5. **CRITICAL: Do NOT include markdown formatting or extra text. Only output a pure JSON object starting with '{{' and ending with '}}'.**
+
+        Legal Document:
         ---
         {text}
         ---
         """
-
         response = llm.generate_content(prompt)
-        return response.text
+
+        json_match = re.search(r"\{.*\}", response.text, re.DOTALL)
+        if not json_match:
+            raise ValueError("No valid JSON object found in Gemini response for summary.")
+
+        clean_json = json_match.group(0)
+        return json.loads(clean_json)
+
     except Exception as e:
-        logging.error(f"Error with Gemini API during summary generation: {e}")
-        return "Could not generate summary due to an API error."
+        logging.error(f"Error generating structured summary: {e}")
+        return {
+            "Summary Error": ["Could not generate summary due to an API error."]
+        }
 
-
-#function for extracting legal clauses from the document
+# Extract legal clauses (liability, termination, confidentiality)
 def extract_clauses(text: str) -> str:
-
     try:
         prompt = f"""
         Analyze the following legal document. Your task is to extract key clauses and categorize them.
@@ -87,14 +98,12 @@ def extract_clauses(text: str) -> str:
         """
         response = llm.generate_content(prompt)
 
-        # Clean up potential markdown formatting from the response text
         json_match = re.search(r"\{.*\}", response.text, re.DOTALL)
         if not json_match:
             raise ValueError("No valid JSON object found in Gemini response.")
 
         clean_json = json_match.group(0)
         return clean_json
-
 
     except Exception as e:
         logging.error(f"Error with Gemini API during clause extraction: {e}")
@@ -104,12 +113,10 @@ def extract_clauses(text: str) -> str:
             "confidentiality": []
         })
 
-
-
-
+# FastAPI app
 app = FastAPI(title="Legal-Lens API")
 
-
+# CORS for frontend access
 origins = [
     "https://legallensfrontend.onrender.com"
 ]
@@ -121,34 +128,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+# Pydantic model for API response
 class ResultStructure(BaseModel):
-    summary: str
+    summary: Dict[str, List[str]]
     clauses: Dict[str, List[str]]
 
+# API Endpoint
 @app.post("/simplify_document", response_model=ResultStructure)
 async def simplify_document(uploaded_file: UploadFile = File(...)):
 
     file_path = f"temp_{uploaded_file.filename}"
 
     try:
-
+        # Save file locally
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(uploaded_file.file, buffer)
 
-
+        # Read and parse
         doc_text = read_pdf_file(file_path)
-
-
         if not doc_text:
             logging.error("Document text is empty. The file might be unreadable or empty.")
             raise HTTPException(status_code=400, detail="Could not read text from the uploaded document.")
 
-        # Calling my functions
+        # Generate summary & extract clauses
         summary = get_summary(doc_text)
         clauses_json_string = extract_clauses(doc_text)
 
-        # Checking whether the clauses is in json format
+        # Parse clauses JSON
         try:
             clauses_dict = json.loads(clauses_json_string)
         except json.JSONDecodeError:
@@ -163,6 +169,6 @@ async def simplify_document(uploaded_file: UploadFile = File(...)):
         logging.error(f"An unexpected server error occurred: {e}")
         raise HTTPException(status_code=500, detail="An internal server error occurred during analysis.")
     finally:
-        # Cleaning temporary file from my local disk
+        # Cleanup temp file
         if os.path.exists(file_path):
             os.remove(file_path)
